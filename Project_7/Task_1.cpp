@@ -37,6 +37,8 @@ int main()
         ok = ss.waitForAll();
     }
 
+//    std::cout << ss.maxBoomTime() << " " << ss.minLaunchTime() << std::endl;
+
     if (ok != 0)
     {
         Logger_errors& logger = Logger_errors::instance();

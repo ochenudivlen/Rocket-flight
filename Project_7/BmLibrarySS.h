@@ -14,9 +14,6 @@
 std::mutex mutex_e;
 std::condition_variable cv;
 
-
-
-
 //!
 class StrikeScenario
 {
@@ -47,108 +44,72 @@ public:
         return ft;
     }
 
-    double tMin = Config::self().maxT(),
-           tMax = 0;
-
-    std::vector<std::thread> threads;
-
-    static void worker(IBmElement* e, std::unordered_map<int, IFlightTask*>::iterator ft, std::unordered_map<int, IBmElement*>& elements,
-        std::unordered_map<int, std::vector<int>>& p_strike, double& tMin, double& tMax,
-        std::unordered_map<int, std::map<double, tPoint>>& flights)
-//    void worker()
-    {
-        std::lock_guard<std::mutex> guard(mutex_e);
-
-        e = elements.insert({ ft->second->id(), new tElement(ft->second) }).first->second;
-        p_strike[ft->second->id()] = { ft->second->id() };
-
-        //!Для проверки количества элементов
-        int count = 0;
-
-        if (e->launchTime() < tMin)
-        {
-            tMin = e->launchTime();
-        }
-
-        if (e->boomTime() > tMax)
-        {
-            tMax = e->boomTime();
-        }
-
-        for (double t = e->launchTime(), tE = e->boomTime(); t < tE; t += 0.1)
-        {
-            // заполнить таблицу (собственную или в IBmElement) с опорными значениями для интерполяции
-            flights[ft->second->id()][t] = e->positionAt(t);
-            count++;
-        }
-
-        // проверить, что для момента e->boomTime() данные тоже посчитаны
-        if (flights[ft->second->id()].count(e->boomTime()) == 0)
-        {
-            flights[ft->second->id()][e->boomTime()] = e->positionAt(e->boomTime());
-            count++;
-        }
-
-        // если что-то пошло не так - жалоба в лог и выход с ошибкой
-        if (count != flights[ft->second->id()].size())
-        {
-            Logger_errors& logger = Logger_errors::instance();
-            logger.log(INTERPOLATION, "This is a message about incorrect interpolation");
-        }
-
-        cv.notify_one();
-        std::this_thread::sleep_for(std::chrono::seconds(3));
-    }
-
     //!
     int prepare(tStrike& p_strike)
     {
-        for (const auto& ft : tasks)
+        for (auto ft : tasks)
         {
             IBmElement* e;
 
-            std::thread thr(&StrikeScenario::worker, e, ft, elements, p_strike, tMin, tMax, flights);
-//            std::thread thr(&StrikeScenario::worker, this);
+            std::thread thr([&](const std::pair<const int, IFlightTask*>& ft)
+                {
+                    std::lock_guard<std::mutex> guard(mutex_e);
+
+                    e = elements.insert({ ft.second->id(), new tElement(ft.second) }).first->second;
+                    p_strike[ft.second->id()] = { ft.second->id() };
+
+                    //!Для проверки количества элементов
+                    int count = 0;
+
+                    for (double t = e->launchTime(), tE = e->boomTime(); t < tE; t += 0.1)
+                    {
+                        // заполнить таблицу (собственную или в IBmElement) с опорными значениями для интерполяции
+                        flights[ft.second->id()][t] = e->positionAt(t);
+                        count++;
+                    }
+
+                    // проверить, что для момента e->boomTime() данные тоже посчитаны
+                    if (flights[ft.second->id()].count(e->boomTime()) == 0)
+                    {
+                        flights[ft.second->id()][e->boomTime()] = e->positionAt(e->boomTime());
+                        count++;
+                    }
+
+                    double tMin = e->launchTime(),
+                           tMax = e->boomTime();
+
+                    // проверяем, не является ли парабола вырожденной
+                    if (tMax - tMin <= 0)
+                    {
+                        Logger_errors& logger = Logger_errors::instance();
+                        logger.log(RANGEofTIME, "This message is about an incorrectly calculated time range");
+                    }
+                    else
+                    {
+                        successes++;
+                    }
+
+                    if (tMin < Min)
+                    {
+                        Min = tMin;
+                    }
+
+                    if (tMax > Max)
+                    {
+                        Max = tMax;
+                    }
+
+                    // если что-то пошло не так - жалоба в лог и выход с ошибкой
+                    if (count != flights[ft.second->id()].size())
+                    {
+                        Logger_errors& logger = Logger_errors::instance();
+                        logger.log(INTERPOLATION, "This is a message about incorrect interpolation");
+                    }
+
+                    cv.notify_one();
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                }, ft);
             threads.push_back(move(thr));
-
-            /*
-            IBmElement* e = elements.insert({ ft.second->id(), new tElement(ft.second) }).first->second;
-            p_strike[ft.second->id()] = { ft.second->id() };
-
-            //!Для проверки количества элементов
-            int count = 0;
-
-            if (e->launchTime() < tMin)
-            {
-                tMin = e->launchTime();
-            }
-
-            if (e->boomTime() > tMax)
-            {
-                tMax = e->boomTime();
-            }
-
-            for (double t = e->launchTime(), tE = e->boomTime(); t < tE; t += 0.1)
-            {
-                // заполнить таблицу (собственную или в IBmElement) с опорными значениями для интерполяции
-                flights[ft.second->id()][t] = e->positionAt(t);
-                count++;
-            }
-
-            // проверить, что для момента e->boomTime() данные тоже посчитаны
-            if (flights[ft.second->id()].count(e->boomTime()) == 0)
-            {
-                flights[ft.second->id()][e->boomTime()] = e->positionAt(e->boomTime());
-                count++;
-            }
-
-            // если что-то пошло не так - жалоба в лог и выход с ошибкой
-            if (count != flights[ft.second->id()].size())
-            {
-                Logger_errors& logger = Logger_errors::instance();
-                logger.log(INTERPOLATION, "This is a message about incorrect interpolation");
-            }
-            */
         }
 
         // TODO: Проверить контрактные ограничения
@@ -171,15 +132,6 @@ public:
             }
         }
 
-        // TODO: вычислить временной диапазон моделирования
-        double tRange = tMax - tMin;
-
-        if (tRange < 0)
-        {
-            Logger_errors& logger = Logger_errors::instance();
-            logger.log(RANGEofTIME, "This message is about an incorrectly calculated time range");
-        }
-
         return 0;
     }
 
@@ -189,7 +141,7 @@ public:
         cv.wait(ul, [&]()
             {
                 //количество задач равно количеству законченных заданий
-                return threads.size() == tasks.size();
+                return successes == tasks.size();
             });
 
         for (auto& thr : threads)
@@ -231,8 +183,6 @@ public:
             else if (p_time < elements[p_id]->boomTime())
             {
                 tPoint position = { 0, 0 };
-
-//                std::map<double, tPoint>::iterator t_low = lower_bound(flights[p_id].begin(), flights[p_id].end(), p_time);
                 std::map<double, tPoint>::iterator t_low = flights[p_id].lower_bound(p_time);
 
                 if (p_time == t_low->first)
@@ -241,13 +191,11 @@ public:
                 }
                 else
                 {
-                    --t_low;
-//                    std::map<double, tPoint>::iterator t_up = upper_bound(flights[p_id].begin(), flights[p_id].end(), p_time);
+                    t_low--;
                     std::map<double, tPoint>::iterator t_up = flights[p_id].upper_bound(p_time);
 
                     position.x = t_low->second.x + (t_up->second.x - t_low->second.x) * (p_time - t_low->first) / (t_up->first - t_low->first);
                     position.y = t_low->second.y + (t_up->second.y - t_low->second.y) * (p_time - t_low->first) / (t_up->first - t_low->first);
- //                   position.y = elements[p_id]->positionAt(p_time).y;
                 }
 
                 logger.log(FLIGHT, "This is a message that the rocket is in flight", position);
@@ -260,17 +208,19 @@ public:
 
     double minLaunchTime()
     {
-        return tMin;
+        return Min;
     }
 
     double maxBoomTime()
     {
-        return tMax;
+        return Max;
     }
 
     //! Таблица с опорными значениями для интерполяции
-    std::unordered_map<double, tPoint>interpolation;
     std::unordered_map<int, std::map<double, tPoint>>flights;
+    std::vector<std::thread> threads;
+    double Min { Config::self().maxT() }, Max { 0 };
+    int successes = 0;
 
 private:
     std::unordered_map<int, IFlightTask*> tasks;

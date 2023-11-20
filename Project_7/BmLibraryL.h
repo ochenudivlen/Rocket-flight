@@ -9,6 +9,8 @@ enum Level : int
     BEGIN,
     FLIGHT,
     END,
+    DEBUG,
+    INFO
 };
 
 //! Логгер в контексте БР
@@ -41,6 +43,32 @@ public:
         }
     }
 
+    void Inflog(Level p_level, const std::string& p_message)
+    {
+        std::ofstream file(m_fileName, std::ios::app);
+        if (file.is_open())
+        {
+            if (p_level == INFO)
+            {
+                //        system:[ INFO]: Completed: 0.0
+                file << "system:[ " << levelToString(p_level) << "]: " << p_message << std::endl;
+            }
+        }
+    }
+
+    void Deblog(Level p_level, int count)
+    {
+        std::ofstream file(m_fileName, std::ios::app);
+        if (file.is_open())
+        {
+            if (p_level == DEBUG)
+            {
+                //        system:[DEBUG]: New strike element added: 49
+                file << "system:[" << levelToString(p_level) << "]: New strike element added: " << count << std::endl;
+            }
+        }
+    }
+
     void loglevel(Level p_level)
     {
         c_level = p_level;
@@ -69,6 +97,10 @@ private:
             return "FLIGHT";
         case END:
             return "END";
+        case DEBUG:
+            return "DEBUG";
+        case INFO:
+            return "INFO";
         default:
             return "";
         }

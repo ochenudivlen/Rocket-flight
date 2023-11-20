@@ -4,6 +4,7 @@
 #include <cmath>
 #include <string>
 #include <fstream>
+#include <mutex>
 #include "BmLibrary.h"
 #include "utility.h"
 #include "BmLibrarytEl.h"
@@ -30,14 +31,14 @@ int main()
         );
     }
 
-    std::unordered_map<int, std::vector<int>> elements; // id (id полетного задания, который запомнили) -> массив движущихся элементов
+    StrikeScenario::tStrike elements; // id (id полетного задания, который запомнили) -> массив движущихся элементов
     int ok = ss.prepare(elements);
+
     if (ok == 0)
     {
-        ok = ss.waitForAll();
+        Logger& logger = Logger::instance();
+        ok = ss.waitForAll([&](double perc) { logger.Inflog(INFO, "Completed: " + std::to_string(100 * perc)); });
     }
-
-//    std::cout << ss.maxBoomTime() << " " << ss.minLaunchTime() << std::endl;
 
     if (ok != 0)
     {

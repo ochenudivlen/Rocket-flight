@@ -6,20 +6,29 @@
 #include "BmLibraryLE.h"
 #include "BmLibraryL.h"
 #include "BmLibraryC.h"
+#include "BmLibraryPM.h"
+#include "BmLibrarytEl.h"
 #include <algorithm>
 #include <iostream>
 #include <thread>
-#include <mutex>
-
-std::mutex mutex_e;
-std::condition_variable cv;
+#include <functional>
 
 //!
-class StrikeScenario
+class StrikeScenario: public AbstractStrikeScenario
 {
 public:
     typedef std::unordered_map<int, std::vector<int>> tStrike;
 public:
+    IFlightTask* flightTaskFor(int p_id, int p_type, double p_t0, double p_angle, const tPoint& p_launch, const tPoint& p_boom) override
+    {
+        return new (std::nothrow) ParabolicModel(p_id, p_type, p_t0, p_angle, p_launch, p_boom);
+    }
+
+    IBmElement* bmElementFor(IFlightTask* p_task) override
+    {
+        return new (std::nothrow) tElement(p_task);
+    }
+
     //! ƒобавл€ет полетное задание в сценарий
     IFlightTask* addFlightTask(int p_type, double p_t0, double p_angle, const tPoint& p_launch, const tPoint& p_boom)
     {
@@ -27,7 +36,7 @@ public:
 
         if (p_type == 1)
         {
-            ft = new ParabolicModel(tasks.size() + 1, p_type, p_t0, p_angle, p_launch, p_boom);
+            ft = flightTaskFor(tasks.size() + 1, p_type, p_t0, p_angle, p_launch, p_boom);
         }
         else
         {
@@ -42,114 +51,6 @@ public:
         }
 
         return ft;
-    }
-
-    //!
-    int prepare(tStrike& p_strike)
-    {
-        for (auto ft : tasks)
-        {
-            IBmElement* e;
-
-            std::thread thr([&](const std::pair<const int, IFlightTask*>& ft)
-                {
-                    std::lock_guard<std::mutex> guard(mutex_e);
-
-                    e = elements.insert({ ft.second->id(), new tElement(ft.second) }).first->second;
-                    p_strike[ft.second->id()] = { ft.second->id() };
-
-                    //!ƒл€ проверки количества элементов
-                    int count = 0;
-
-                    for (double t = e->launchTime(), tE = e->boomTime(); t < tE; t += 0.1)
-                    {
-                        // заполнить таблицу (собственную или в IBmElement) с опорными значени€ми дл€ интерпол€ции
-                        flights[ft.second->id()][t] = e->positionAt(t);
-                        count++;
-                    }
-
-                    // проверить, что дл€ момента e->boomTime() данные тоже посчитаны
-                    if (flights[ft.second->id()].count(e->boomTime()) == 0)
-                    {
-                        flights[ft.second->id()][e->boomTime()] = e->positionAt(e->boomTime());
-                        count++;
-                    }
-
-                    double tMin = e->launchTime(),
-                           tMax = e->boomTime();
-
-                    // провер€ем, не €вл€етс€ ли парабола вырожденной
-                    if (tMax - tMin <= 0)
-                    {
-                        Logger_errors& logger = Logger_errors::instance();
-                        logger.log(RANGEofTIME, "This message is about an incorrectly calculated time range");
-                    }
-                    else
-                    {
-                        successes++;
-                    }
-
-                    if (tMin < Min)
-                    {
-                        Min = tMin;
-                    }
-
-                    if (tMax > Max)
-                    {
-                        Max = tMax;
-                    }
-
-                    // если что-то пошло не так - жалоба в лог и выход с ошибкой
-                    if (count != flights[ft.second->id()].size())
-                    {
-                        Logger_errors& logger = Logger_errors::instance();
-                        logger.log(INTERPOLATION, "This is a message about incorrect interpolation");
-                    }
-
-                    cv.notify_one();
-                    std::this_thread::sleep_for(std::chrono::seconds(1));
-                }, ft);
-            threads.push_back(move(thr));
-        }
-
-        // TODO: ѕроверить контрактные ограничени€
-        std::map<double, int> flying;
-        for (const auto& e : elements) 
-        {
-            ++flying[e.second->launchTime()];
-            --flying[e.second->boomTime()];
-        }
-
-        int rockets = 0;
-        for (std::map<double, int>::iterator it = flying.begin(); it != flying.end(); ++it)
-        {
-            rockets += it->second;
-
-            if (rockets > Config::self().premittedBMs())
-            {
-                Logger_errors& logger = Logger_errors::instance();
-                logger.log(CONTRACT_RESTRICTION, "This is a contract violation message");
-            }
-        }
-
-        return 0;
-    }
-
-    int waitForAll()
-    {
-        std::unique_lock<std::mutex> ul(mutex_e);
-        cv.wait(ul, [&]()
-            {
-                //количество задач равно количеству законченных заданий
-                return successes == tasks.size();
-            });
-
-        for (auto& thr : threads)
-        {
-            thr.join();
-        }
-
-        return 0;
     }
 
     //!
@@ -215,14 +116,4 @@ public:
     {
         return Max;
     }
-
-    //! “аблица с опорными значени€ми дл€ интерпол€ции
-    std::unordered_map<int, std::map<double, tPoint>>flights;
-    std::vector<std::thread> threads;
-    double Min { Config::self().maxT() }, Max { 0 };
-    int successes = 0;
-
-private:
-    std::unordered_map<int, IFlightTask*> tasks;
-    std::unordered_map<int, IBmElement*> elements;
 };

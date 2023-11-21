@@ -12,34 +12,47 @@ int AbstractStrikeScenario::prepare(tStrike& p_strike)
 {
     for (auto ft : tasks)
     {
-        IBmElement* e;
+//        IBmElement* e;
 
         std::thread thr([&](const std::pair<const int, IFlightTask*>& ft)
             {
-                std::lock_guard<std::mutex> guard(mutex_e);
+//                std::lock_guard<std::mutex> guard(mutex_e);
 
-                e = elements.insert({ ft.second->id(), bmElementFor(ft.second) }).first->second;
+                mutex_e.lock();
+                IBmElement* e = elements.insert({ ft.second->id(), bmElementFor(ft.second) }).first->second;
                 p_strike[ft.second->id()] = { ft.second->id() };
+                mutex_e.unlock();
 
                 //!Для проверки количества элементов
                 int count = 0;
-
+                mutex_e.lock();
+                auto& points = flights[ft.second->id()];
+                mutex_e.unlock();
                 for (double t = e->launchTime(), tE = e->boomTime(); t < tE; t += 0.1)
                 {
                     // заполнить таблицу (собственную или в IBmElement) с опорными значениями для интерполяции
-                    flights[ft.second->id()][t] = e->positionAt(t);
+                    points[t] = e->positionAt(t);
                     count++;
                 }
 
                 // проверить, что для момента e->boomTime() данные тоже посчитаны
-                if (flights[ft.second->id()].count(e->boomTime()) == 0)
+                if (points.count(e->boomTime()) == 0)
                 {
-                    flights[ft.second->id()][e->boomTime()] = e->positionAt(e->boomTime());
+                    points[e->boomTime()] = e->positionAt(e->boomTime());
                     count++;
                 }
 
                 double tMin = e->launchTime(),
                     tMax = e->boomTime();
+
+                // если что-то пошло не так - жалоба в лог и выход с ошибкой
+                if (count != points.size())
+                {
+                    Logger_errors& logger = Logger_errors::instance();
+                    logger.log(INTERPOLATION, "This is a message about incorrect interpolation");
+                }
+
+                std::this_thread::sleep_for(std::chrono::seconds(3*ft.second->id() + 1));
 
                 // проверяем, не является ли парабола вырожденной
                 if (tMax - tMin <= 0)
@@ -49,28 +62,13 @@ int AbstractStrikeScenario::prepare(tStrike& p_strike)
                 }
                 else
                 {
+                    std::lock_guard<std::mutex> guard(mutex_e);
+                    if (tMin < Min) Min = tMin;
+                    if (tMax > Max) Max = tMax;
                     successes++;
                 }
 
-                if (tMin < Min)
-                {
-                    Min = tMin;
-                }
-
-                if (tMax > Max)
-                {
-                    Max = tMax;
-                }
-
-                // если что-то пошло не так - жалоба в лог и выход с ошибкой
-                if (count != flights[ft.second->id()].size())
-                {
-                    Logger_errors& logger = Logger_errors::instance();
-                    logger.log(INTERPOLATION, "This is a message about incorrect interpolation");
-                }
-
                 cv.notify_one();
-                std::this_thread::sleep_for(std::chrono::seconds(1));
             }, ft);
         threads.push_back(move(thr));
     }

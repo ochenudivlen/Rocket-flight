@@ -71,6 +71,7 @@ public:
         {
             Logger_errors& logger = Logger_errors::instance();
             logger.log(NOT_FOUND, "This message is about IBmElement not found");
+            return tPoint::none();
         }
         else
         {
